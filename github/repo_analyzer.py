@@ -2,6 +2,7 @@ import os
 from collections import defaultdict
 
 from github.file_scanner import scan_repo_files
+from heuristics.reviewer import analyze_code_snippets
 
 
 LANGUAGE_EXTENSIONS = {
@@ -47,6 +48,9 @@ def analyze_repo(repo_path: str) -> dict:
 
     language_counter = defaultdict(int)
     frameworks = set()
+    
+    # Store relative paths for heuristic analysis
+    rel_paths = []
 
     for file_path in files:
         rel_path = os.path.relpath(os.path.dirname(file_path), repo_path)
@@ -59,6 +63,9 @@ def analyze_repo(repo_path: str) -> dict:
             has_services = 1
         if folder_name == "utils":
             has_utils = 1
+            
+        full_rel_path = os.path.relpath(file_path, repo_path)
+        rel_paths.append(full_rel_path)
 
         ext = os.path.splitext(file_path)[1].lower()
 
@@ -86,6 +93,9 @@ def analyze_repo(repo_path: str) -> dict:
 
         # track folder
         folders.add(rel_path)
+        
+    # Analyze code snippets/files
+    advanced_analysis = analyze_code_snippets(rel_paths, repo_path)
 
     avg_file_lines = total_lines / file_count if file_count else 0
 
@@ -114,4 +124,5 @@ def analyze_repo(repo_path: str) -> dict:
         "avg_file_lines": round(avg_file_lines, 2),
         "ui_score": round(ui_score, 2),
         "complexity_score": round(complexity_score, 2),
+        "code_review": advanced_analysis
     }

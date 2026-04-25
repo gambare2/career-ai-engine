@@ -29,6 +29,7 @@ predictor = UnifiedPredictor()
 class AnalyzeRequest(BaseModel):
     repo_url: str
     resume_skills: list[str] = []
+    interested_field: str = None
 
 
 # -------------------------------------------------
@@ -41,6 +42,53 @@ def health():
         "engine": "CareerAI Engine"
     }
 
+# -------------------------------------------------
+# Resume Upload (PDF)
+# -------------------------------------------------
+from fastapi import UploadFile, File, Form
+import PyPDF2
+from heuristics.reviewer import review_resume, recommend_career_path
+from heuristics.parser import parse_resume_text
+
+@app.post("/upload-resume")
+async def upload_resume(
+    file: UploadFile = File(...),
+    interested_field: str = Form(None)
+):
+    try:
+        # Read the PDF
+        reader = PyPDF2.PdfReader(file.file)
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text() or ""
+            
+        # Analyze using heuristics
+        review_result = review_resume(text)
+        
+        # Add career recommendation if interested_field is provided
+        recommendation = None
+        if interested_field:
+            recommendation = recommend_career_path(
+                skills=review_result.get("extracted_skills", []), 
+                interested_field=interested_field
+            )
+            
+        # Parse text into structured builder data
+        parsed_data = parse_resume_text(text)
+            
+        return {
+            "status": "success",
+            "filename": file.filename,
+            "review": review_result,
+            "recommendation": recommendation,
+            "parsed_data": parsed_data
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to process resume PDF: {str(e)}"
+        )
+
 
 # -------------------------------------------------
 # MAIN Endpoint: GitHub + Resume → CareerAI Output
@@ -50,6 +98,7 @@ def analyze(request: AnalyzeRequest):
     try:
         repo_url = request.repo_url
         resume_skills = request.resume_skills or []
+        interested_field = request.interested_field
 
         if not repo_url:
             raise HTTPException(status_code=400, detail="repo_url required")
@@ -66,7 +115,8 @@ def analyze(request: AnalyzeRequest):
             # 3) Predict (EvalAI + SmartHire AI merged)
             result = predictor.predict(
                 repo_analysis=repo_analysis,
-                resume_skill_list=resume_skills
+                resume_skill_list=resume_skills,
+                interested_field=interested_field
             )
 
         return result

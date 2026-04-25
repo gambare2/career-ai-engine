@@ -5,3 +5,6 @@ joblib
 fastapi 
 uvicorn 
 pydantic
+gitpython
+PyPDF2
+python-multipart

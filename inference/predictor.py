@@ -154,14 +154,15 @@ class UnifiedPredictor:
     # -------------------------------
     # MAIN PREDICT
     # -------------------------------
-    def predict(self, repo_analysis: dict, resume_skill_list=None):
+    def predict(self, repo_analysis: dict, resume_skill_list=None, interested_field=None):
         """
         Input:
           repo_analysis -> output of repo_analyzer.analyze_repo()
           resume_skill_list -> optional list of skills extracted from resume
-
+          interested_field -> optional user interested field for recommendation
+          
         Output:
-          EvalAI ML predictions + SmartHire merged skills + readiness + level
+          EvalAI ML predictions + SmartHire merged skills + readiness + level + recommendations
         """
 
         if resume_skill_list is None:
@@ -254,6 +255,14 @@ class UnifiedPredictor:
             languages=languages,
             frameworks=frameworks
         )
+        
+        # ------------------------------------------
+        # Career Recommendation
+        # ------------------------------------------
+        from heuristics.reviewer import recommend_career_path
+        
+        merged_skills_list = [s["name"] for s in payload["merged_skills"]]
+        recommendations = recommend_career_path(merged_skills_list, interested_field)
 
         # ------------------------------------------
         # FINAL OUTPUT
@@ -282,4 +291,8 @@ class UnifiedPredictor:
             # Explainability
             "explanation": explanation,
             "feature_importance": importance_map,
+            
+            # New Advanced Review
+            "code_review": repo_analysis.get("code_review", {}),
+            "career_recommendation": recommendations
         }
