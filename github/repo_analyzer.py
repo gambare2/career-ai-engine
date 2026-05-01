@@ -3,7 +3,7 @@ from collections import defaultdict
 
 from github.file_scanner import scan_repo_files
 from heuristics.reviewer import analyze_code_snippets
-
+from github.ast_analyzer import run_ast_analysis
 
 LANGUAGE_EXTENSIONS = {
     ".py": "Python",
@@ -33,7 +33,6 @@ FRAMEWORK_KEYWORDS = {
 
 SUPPORTED_EXTENSIONS = tuple(LANGUAGE_EXTENSIONS.keys())
 
-
 def analyze_repo(repo_path: str) -> dict:
     files = scan_repo_files(repo_path)
 
@@ -44,7 +43,10 @@ def analyze_repo(repo_path: str) -> dict:
 
     has_services = 0
     has_utils = 0
+    has_auth = 0
+    has_api = 0
     react_files = 0
+    backend_files = 0
 
     language_counter = defaultdict(int)
     frameworks = set()
@@ -61,8 +63,12 @@ def analyze_repo(repo_path: str) -> dict:
         folder_name = os.path.basename(os.path.dirname(file_path)).lower()
         if folder_name == "services":
             has_services = 1
-        if folder_name == "utils":
+        if folder_name == "utils" or folder_name == "util":
             has_utils = 1
+        if "auth" in folder_name or "auth" in os.path.basename(file_path).lower():
+            has_auth = 1
+        if "api" in folder_name or "route" in folder_name:
+            has_api = 1
             
         full_rel_path = os.path.relpath(file_path, repo_path)
         rel_paths.append(full_rel_path)
@@ -84,15 +90,30 @@ def analyze_repo(repo_path: str) -> dict:
                         if key in content:
                             frameworks.add(fw)
 
-                    # react heuristic
+                    # heuristics
                     if "react" in content or "jsx" in file_path.lower():
                         react_files += 1
+                    if "express" in content or "fastapi" in content or "django" in content or "spring" in content:
+                        backend_files += 1
 
             except Exception:
                 pass
 
         # track folder
         folders.add(rel_path)
+        
+    # Determine project type
+    if react_files > 0 and backend_files > 0:
+        project_type = "Fullstack"
+    elif react_files > 0:
+        project_type = "Frontend"
+    elif backend_files > 0:
+        project_type = "Backend"
+    else:
+        project_type = "Other"
+
+    # Stage 2: AST Based Analysis
+    ast_analysis = run_ast_analysis(repo_path, files)
         
     # Analyze code snippets/files
     advanced_analysis = analyze_code_snippets(rel_paths, repo_path)
@@ -102,9 +123,9 @@ def analyze_repo(repo_path: str) -> dict:
     # Language confidence %
     total_lang_files = sum(language_counter.values())
     language_confidence = {}
-
-    for lang, count in language_counter.items():
-        language_confidence[lang] = round((count / total_lang_files) * 100, 2)
+    if total_lang_files > 0:
+        for lang, count in language_counter.items():
+            language_confidence[lang] = round((count / total_lang_files) * 100, 2)
 
     # UI score heuristic
     ui_score = min(10.0, 5.0 + react_files / 5)
@@ -121,8 +142,12 @@ def analyze_repo(repo_path: str) -> dict:
         "max_depth": max_depth,
         "has_services": has_services,
         "has_utils": has_utils,
+        "has_auth": has_auth,
+        "has_api": has_api,
+        "project_type": project_type,
         "avg_file_lines": round(avg_file_lines, 2),
         "ui_score": round(ui_score, 2),
         "complexity_score": round(complexity_score, 2),
-        "code_review": advanced_analysis
+        "code_review": advanced_analysis,
+        "ast_analysis": ast_analysis # Include stage 2 results
     }

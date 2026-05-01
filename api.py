@@ -46,7 +46,9 @@ def health():
 # Resume Upload (PDF)
 # -------------------------------------------------
 from fastapi import UploadFile, File, Form
-import PyPDF2
+import pdfplumber
+import docx
+from io import BytesIO
 from heuristics.reviewer import review_resume, recommend_career_path
 from heuristics.parser import parse_resume_text
 
@@ -56,11 +58,20 @@ async def upload_resume(
     interested_field: str = Form(None)
 ):
     try:
-        # Read the PDF
-        reader = PyPDF2.PdfReader(file.file)
+        # Read the file
+        content = await file.read()
         text = ""
-        for page in reader.pages:
-            text += page.extract_text() or ""
+        if file.filename.lower().endswith(".pdf"):
+            with pdfplumber.open(BytesIO(content)) as pdf:
+                for page in pdf.pages:
+                    text += page.extract_text() or ""
+        elif file.filename.lower().endswith(".docx"):
+            doc = docx.Document(BytesIO(content))
+            for para in doc.paragraphs:
+                text += para.text + "\n"
+        else:
+            # Fallback or plain text
+            text = content.decode("utf-8", errors="ignore")
             
         # Analyze using heuristics
         review_result = review_resume(text)

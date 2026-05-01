@@ -1,8 +1,25 @@
 import re
+import json
+
+try:
+    import spacy
+    nlp = spacy.load("en_core_web_sm")
+except ImportError:
+    nlp = None
+except OSError:
+    # Model not found, could download here but usually done via CLI
+    nlp = None
+
+def extract_entities(text):
+    if not nlp:
+        return []
+    doc = nlp(text)
+    return [(ent.text, ent.label_) for ent in doc.ents]
 
 def parse_resume_text(text: str) -> dict:
     """
-    Hardcoded heuristics parser to extract structured data from raw resume text.
+    Advanced heuristics parser to extract structured data from raw resume text
+    using regex and spaCy.
     """
     lines = [line.strip() for line in text.split('\n') if line.strip()]
     if not lines:
@@ -18,13 +35,15 @@ def parse_resume_text(text: str) -> dict:
         "experience": [],
         "education": [],
         "projects": [],
-        "skills": ""
+        "skills": "",
+        "certifications": [],
+        "internships": [],
+        "technologies_used": []
     }
 
-    # 1. Name (Assume first non-empty line is the name)
+    # Extract basic info
     parsed_data["name"] = lines[0] if lines else ""
 
-    # 2. Email & Phone (Search entire text)
     email_match = re.search(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', text)
     if email_match:
         parsed_data["email"] = email_match.group(0)
@@ -41,13 +60,21 @@ def parse_resume_text(text: str) -> dict:
     if github_match:
         parsed_data["portfolio"] = github_match.group(0)
 
-    # 3. Section Splitting
+    # NLP based extraction (Names, Orgs)
+    entities = extract_entities(text[:1000]) # Scan first 1000 chars
+    for ent_text, label in entities:
+        if label == "PERSON" and not parsed_data["name"]:
+            parsed_data["name"] = ent_text
+
+    # Section Splitting
     sections = {
         "summary": [],
         "experience": [],
         "education": [],
         "projects": [],
-        "skills": []
+        "skills": [],
+        "certifications": [],
+        "internships": []
     }
     
     current_section = None
@@ -58,10 +85,13 @@ def parse_resume_text(text: str) -> dict:
         if any(keyword in line_upper for keyword in ["SUMMARY", "PROFILE", "ABOUT ME"]):
             current_section = "summary"
             continue
+        elif any(keyword in line_upper for keyword in ["INTERNSHIP", "INTERNSHIPS"]):
+            current_section = "internships"
+            continue
         elif any(keyword in line_upper for keyword in ["EXPERIENCE", "WORK HISTORY", "EMPLOYMENT"]):
             current_section = "experience"
             continue
-        elif any(keyword in line_upper for keyword in ["EDUCATION", "ACADEMIC"]):
+        elif any(keyword in line_upper for keyword in ["EDUCATION", "ACADEMIC", "UNIVERSITY"]):
             current_section = "education"
             continue
         elif any(keyword in line_upper for keyword in ["PROJECT", "PROJECTS", "PORTFOLIO"]):
@@ -70,17 +100,27 @@ def parse_resume_text(text: str) -> dict:
         elif any(keyword in line_upper for keyword in ["SKILL", "TECHNOLOGIES"]):
             current_section = "skills"
             continue
+        elif any(keyword in line_upper for keyword in ["CERTIFICATE", "CERTIFICATIONS", "LICENSES"]):
+            current_section = "certifications"
+            continue
 
         if current_section:
             sections[current_section].append(line)
 
-    # 4. Process Sections
+    # Process Sections
     parsed_data["summary"] = " ".join(sections["summary"])
     parsed_data["skills"] = " ".join(sections["skills"])
+    parsed_data["certifications"] = sections["certifications"]
+
+    # Technologies used (extract from skills and projects)
+    tech_keywords = ["python", "java", "javascript", "react", "node", "sql", "aws", "docker", "kubernetes", "c++", "c#", "html", "css", "typescript", "git"]
+    tech_found = set()
+    for word in text.lower().replace(",", " ").split():
+        if word in tech_keywords:
+            tech_found.add(word)
+    parsed_data["technologies_used"] = list(tech_found)
 
     # Basic heuristic to chunk experience
-    # Every time we see a year-ish string (e.g., 2020 - 2022, Present), we start a new block or assign duration
-    # This is a very rough hardcoded approximation
     if sections["experience"]:
         exp_block = {"id": 1, "company": "", "role": "", "duration": "", "description": ""}
         counter = 1
@@ -88,8 +128,7 @@ def parse_resume_text(text: str) -> dict:
         for line in sections["experience"]:
             date_match = re.search(r'(19|20)\d{2}.*(19|20)\d{2}|(19|20)\d{2}.*Present', line, re.IGNORECASE)
             if date_match and len(line) < 50:
-                # Likely a date/header line
-                if exp_block["company"]: # Save previous
+                if exp_block["company"]:
                     exp_block["description"] = "\n".join(desc_lines)
                     parsed_data["experience"].append(exp_block)
                     counter += 1
@@ -103,10 +142,35 @@ def parse_resume_text(text: str) -> dict:
             else:
                 desc_lines.append(line)
         
-        # append last block
         if exp_block["company"] or desc_lines:
             exp_block["description"] = "\n".join(desc_lines)
             parsed_data["experience"].append(exp_block)
+
+    # Internships
+    if sections["internships"]:
+        intern_block = {"id": 1, "company": "", "role": "", "duration": "", "description": ""}
+        counter = 1
+        desc_lines = []
+        for line in sections["internships"]:
+            date_match = re.search(r'(19|20)\d{2}.*(19|20)\d{2}|(19|20)\d{2}.*Present', line, re.IGNORECASE)
+            if date_match and len(line) < 50:
+                if intern_block["company"]:
+                    intern_block["description"] = "\n".join(desc_lines)
+                    parsed_data["internships"].append(intern_block)
+                    counter += 1
+                    intern_block = {"id": counter, "company": "", "role": "", "duration": "", "description": ""}
+                    desc_lines = []
+                intern_block["duration"] = line
+            elif len(line) < 50 and not intern_block["company"]:
+                intern_block["company"] = line
+            elif len(line) < 50 and not intern_block["role"]:
+                intern_block["role"] = line
+            else:
+                desc_lines.append(line)
+        
+        if intern_block["company"] or desc_lines:
+            intern_block["description"] = "\n".join(desc_lines)
+            parsed_data["internships"].append(intern_block)
 
     # Basic heuristic for education
     if sections["education"]:
@@ -125,7 +189,6 @@ def parse_resume_text(text: str) -> dict:
             elif len(line) < 80 and not edu_block["degree"]:
                 edu_block["degree"] = line
             else:
-                # Save and start new if we see another school
                 if "university" in line.lower() or "college" in line.lower() or "institute" in line.lower():
                     parsed_data["education"].append(edu_block)
                     counter += 1
@@ -140,21 +203,18 @@ def parse_resume_text(text: str) -> dict:
         counter = 1
         desc_lines = []
         for line in sections["projects"]:
-            # usually projects have short names
             if len(line) < 40 and not proj_block["name"]:
                 proj_block["name"] = line
             elif ("react" in line.lower() or "python" in line.lower() or "node" in line.lower() or "stack" in line.lower()) and len(line) < 60 and not proj_block["tech"]:
                 proj_block["tech"] = line
             else:
                 desc_lines.append(line)
-                # if we hit a newline in original text, might be a new project, but we stripped newlines.
-                # Just clump it all for now or split on bullets.
         
         proj_block["description"] = "\n".join(desc_lines)
         if proj_block["name"] or proj_block["description"]:
             parsed_data["projects"].append(proj_block)
 
-    # Fallback to avoid empty lists breaking the UI
+    # Fallbacks
     if not parsed_data["experience"]:
         parsed_data["experience"] = [{"id": 1, "company": "Company Name", "role": "Job Title", "duration": "Month Year - Month Year", "description": "Describe your achievements..."}]
     if not parsed_data["education"]:

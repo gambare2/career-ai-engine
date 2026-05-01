@@ -6,5 +6,7 @@ fastapi
 uvicorn 
 pydantic
 gitpython
-PyPDF2
 python-multipart
+pdfplumber
+python-docx
+spacy
